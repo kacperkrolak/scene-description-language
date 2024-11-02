@@ -1,0 +1,28 @@
+MODIFY CAMERA {
+    position: [0, 1.5, -10],
+    rotation: [0, 0, 0],
+    focalDistance: 35.0,
+    ambientIntensity 0.3,
+}
+
+NUMBER pi = 3.14159265359,
+
+COLOR red = [1.0, 0.0, 0.0],
+
+MATERIAL shiny = {
+    ambientIntensity: 0.1,
+    diffuseIntensity: 0.7,
+    specularIntensity: 1.0,
+    color: white,
+}
+
+SPHERE sphere1 = {
+    material: shiny,
+    radius: 1.5,
+}
+
+LIGHT light1 AT [0, 1.5, 0] = {
+    color: white,
+    specularIntensity: 0.5,
+    diffuseIntensity: 0.7,
+}
