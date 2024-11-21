@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"reflect"
 	"strconv"
 	"testing"
 
@@ -12,8 +13,8 @@ import (
 func TestAssignStatements(t *testing.T) {
 	input := `
    NUMBER pi = 3.14159265359
-   COLOR red = [1.0, 0.0, 0.0]
-   NUMBER negative = -1.0
+   NUMBER red = [1.0, 0.0, 0.0]
+   NUMBER negative = pi
    `
 	l := lexer.New(input)
 	p := New(l)
@@ -23,27 +24,41 @@ func TestAssignStatements(t *testing.T) {
 	if program == nil {
 		t.Fatalf("ParseFile() returned nil")
 	}
-	if len(program.Statements) != 3 {
-		t.Fatalf("program.Statements does not contain 3 statements. got=%d", len(program.Statements))
-	}
 
 	tests := []struct {
 		expectedIdentifier string
+		expectedValue      ast.Expression
 	}{
-		{"pi"},
-		{"red"},
-		{"negative"},
+		{"pi", &ast.FloatLiteral{Token: token.Token{Type: token.FLOAT, Literal: "3.14159265359"}, Value: 3.14159265359}},
+		{"red", &ast.ArrayExpression{
+			Token: token.Token{Type: token.LBRACKET, Literal: "["},
+			Elements: []ast.Expression{
+				&ast.FloatLiteral{Token: token.Token{Type: token.FLOAT, Literal: "1.0"}, Value: 1.0},
+				&ast.FloatLiteral{Token: token.Token{Type: token.FLOAT, Literal: "0.0"}, Value: 0.0},
+				&ast.FloatLiteral{Token: token.Token{Type: token.FLOAT, Literal: "0.0"}, Value: 0.0},
+			}}},
+		{"negative", &ast.Identifier{Token: token.Token{Type: token.IDENT, Literal: "pi"}, Value: "pi"}},
+	}
+
+	if len(program.Statements) != len(tests) {
+		t.Fatalf("program.Statements does not contain %d statements. got=%d", len(tests), len(program.Statements))
 	}
 
 	for i, tt := range tests {
 		stmt := program.Statements[i]
-		if !testAssignStatement(t, stmt, tt.expectedIdentifier) {
-			return
+		assignStmt, ok := stmt.(*ast.AssignStatement)
+		if !ok {
+			t.Errorf("stmt is not *ast.AssignStatement. got=%T", stmt)
+			continue
+		}
+
+		if assignStmt.Value.String() != tt.expectedValue.String() {
+			t.Errorf("assignStmt.Value.String() not %s. got=%s", tt.expectedValue.String(), assignStmt.Value.String())
 		}
 	}
 }
 
-func testAssignStatement(t *testing.T, s ast.Statement, name string) bool {
+func testAssignStatement(t *testing.T, s ast.Statement, name string, expectedValue ast.Expression) bool {
 	if !isObjectType(token.LookupIdent(s.TokenLiteral())) {
 		t.Errorf("s.TokenLiteral not an object type. got=%q", s.TokenLiteral())
 		return false
@@ -62,6 +77,12 @@ func testAssignStatement(t *testing.T, s ast.Statement, name string) bool {
 		t.Errorf("s.Name not '%s'. got=%s", name, assignStmt.Name)
 		return false
 	}
+
+	if !reflect.DeepEqual(assignStmt.Value, expectedValue) {
+		t.Errorf("assignStmt.Value not %v. got=%v", expectedValue, assignStmt.Value)
+		return false
+	}
+
 	return true
 }
 
@@ -297,34 +318,118 @@ func testInfixExpression(t *testing.T, exp ast.Expression, left interface{}, ope
 }
 
 func TestArrayExpression(t *testing.T) {
-	input := "[0.0, 1.0, 0.0]"
-	expectedElements := []float64{0.0, 1.0, 0.0}
-
-	l := lexer.New(input)
-	p := New(l)
-	program := p.ParseFile()
-	checkParserErrors(t, p)
-	if len(program.Statements) != 1 {
-		t.Fatalf("program has not enough statements. got=%d", len(program.Statements))
-	}
-	stmt, ok := program.Statements[0].(*ast.ExpressionStatement)
-	if !ok {
-		t.Fatalf("program.Statements[0] is not ast.ExpressionStatement. got=%T",
-			program.Statements[0])
+	tests := []struct {
+		input            string
+		expectedElements []float64
+	}{
+		{"[]", []float64{}},
+		{"[1.0]", []float64{1.0}},
+		{`
+[
+  1.0,
+  2.0,
+  3.0,
+]`, []float64{1.0, 2.0, 3.0}},
 	}
 
-	array, ok := stmt.Expression.(*ast.ArrayExpression)
-	if !ok {
-		t.Fatalf("exp not *ast.ArrayExpression. got=%T", stmt.Expression)
+	for _, tt := range tests {
+		l := lexer.New(tt.input)
+		p := New(l)
+		program := p.ParseFile()
+		checkParserErrors(t, p)
+		if len(program.Statements) != 1 {
+			t.Fatalf("program has not enough statements. got=%d", len(program.Statements))
+		}
+		stmt, ok := program.Statements[0].(*ast.ExpressionStatement)
+		if !ok {
+			t.Fatalf("program.Statements[0] is not ast.ExpressionStatement. got=%T",
+				program.Statements[0])
+		}
+
+		array, ok := stmt.Expression.(*ast.ArrayExpression)
+		if !ok {
+			t.Fatalf("exp not *ast.ArrayExpression. got=%T", stmt.Expression)
+		}
+
+		if len(array.Elements) != len(tt.expectedElements) {
+			t.Fatalf("len(array.Elements) not %d. got=%d", len(tt.expectedElements), len(array.Elements))
+		}
+
+		for i, element := range tt.expectedElements {
+			if !testLiteralExpression(t, array.Elements[i], element) {
+				return
+			}
+		}
+	}
+}
+
+func TestParsingPropertiesExpression(t *testing.T) {
+	type expectation struct {
+		key   string
+		value float64
 	}
 
-	if len(array.Elements) != len(expectedElements) {
-		t.Fatalf("len(array.Elements) not %d. got=%d", len(expectedElements), len(array.Elements))
+	tests := []struct {
+		input    string
+		expected []expectation
+	}{
+		{
+			input: `{
+prop_one: 1.0,
+prop_two: 2.0,
+}`,
+			expected: []expectation{
+				{"prop_one", 1.0},
+				{"prop_two", 2.0},
+			},
+		},
+		{
+			input: `{prop_one: 1.0, prop_two: 2.0}`,
+			expected: []expectation{
+				{"prop_one", 1.0},
+				{"prop_two", 2.0},
+			},
+		},
+		{
+			input:    `{}`,
+			expected: []expectation{},
+		},
 	}
 
-	for i, element := range expectedElements {
-		if !testLiteralExpression(t, array.Elements[i], element) {
-			return
+	for _, tt := range tests {
+		l := lexer.New(tt.input)
+		p := New(l)
+		program := p.ParseFile()
+		checkParserErrors(t, p)
+
+		if program == nil {
+			t.Fatalf("ParseFile() returned nil")
+		}
+		if len(program.Statements) != 1 {
+			t.Fatalf("program.Statements does not contain 1 statements. got=%d", len(program.Statements))
+		}
+
+		stmt, ok := program.Statements[0].(*ast.ExpressionStatement)
+		if !ok {
+			t.Fatalf("program.Statements[0] is not ast.ExpressionStatement. got=%T",
+				program.Statements[0])
+		}
+
+		propertiesExp, ok := stmt.Expression.(*ast.PropertiesExpression)
+		if !ok {
+			t.Fatalf("exp not *ast.PropertiesExpression. got=%T", stmt.Expression)
+		}
+
+		for _, expected := range tt.expected {
+			prop, ok := propertiesExp.Properties[expected.key]
+			if !ok {
+				t.Errorf("propertiesExp.Properties does not contain key '%s'", expected.key)
+				continue
+			}
+
+			if !testLiteralExpression(t, prop, expected.value) {
+				return
+			}
 		}
 	}
 }

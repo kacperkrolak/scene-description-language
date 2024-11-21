@@ -59,6 +59,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(token.MINUS, p.parsePrefixExpression)
 	p.registerPrefix(token.LPAREN, p.parseGroupedExpression)
 	p.registerPrefix(token.LBRACKET, p.parseArrayExpression)
+	p.registerPrefix(token.LBRACE, p.parsePropertiesExpression)
 
 	p.infixParseFns = make(map[token.TokenType]infixParseFn)
 	p.registerInfix(token.MINUS, p.parseInfixExpression)
@@ -105,19 +106,25 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 }
 
 func (p *Parser) parseArrayExpression() ast.Expression {
-	p.nextToken()
-
 	arrayExp := &ast.ArrayExpression{Token: p.curToken}
-	exp := p.parseExpression(LOWEST)
-	for exp != nil {
+	for {
+		if p.peekTokenIs(token.RBRACKET) {
+			break
+		}
+
+		p.nextToken()
+
+		exp := p.parseExpression(LOWEST)
+		if exp == nil {
+			return nil
+		}
+
 		arrayExp.Elements = append(arrayExp.Elements, exp)
 		if !p.peekTokenIs(token.COMMA) {
 			break
 		}
 
 		p.nextToken()
-		p.nextToken()
-		exp = p.parseExpression(LOWEST)
 	}
 
 	if !p.expectPeek(token.RBRACKET) {
@@ -125,6 +132,57 @@ func (p *Parser) parseArrayExpression() ast.Expression {
 	}
 
 	return arrayExp
+}
+
+func (p *Parser) parsePropertiesExpression() ast.Expression {
+	propertiesExp := &ast.PropertiesExpression{
+		Token:      p.curToken,
+		Properties: make(map[string]ast.Expression),
+	}
+
+	for {
+		if !p.peekTokenIs(token.IDENT) {
+			break
+		}
+
+		p.nextToken()
+		identifierExp := p.parseIdentifier()
+		indentifier, ok := identifierExp.(*ast.Identifier)
+		if !ok {
+			return nil
+		}
+
+		// In this statement, we treat the identifier (key) as a string
+		key := indentifier.Value
+
+		if !p.expectPeek(token.COLON) {
+			return nil
+		}
+
+		p.nextToken()
+
+		exp := p.parseExpression(LOWEST)
+		if exp == nil {
+			return nil
+		}
+
+		propertiesExp.Properties[key] = exp
+
+		if p.peekTokenIs(token.RBRACE) {
+			p.nextToken()
+			return propertiesExp
+		}
+
+		if !p.expectPeek(token.COMMA) {
+			break
+		}
+	}
+
+	if !p.expectPeek(token.RBRACE) {
+		return nil
+	}
+
+	return propertiesExp
 }
 
 func isObjectType(tokenType token.TokenType) bool {
@@ -184,6 +242,10 @@ func (p *Parser) expectPeek(t token.TokenType) bool {
 		p.peekError(t)
 		return false
 	}
+}
+
+func (p *Parser) addErrorMessage(message string) {
+	p.errors = append(p.errors, message)
 }
 
 func (p *Parser) peekError(t token.TokenType) {
