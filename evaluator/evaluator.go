@@ -88,6 +88,16 @@ type Evaluator struct {
 	env *Environment
 }
 
+func Eval(node ast.Node) (EvaluatedValues, error) {
+	evaluator := NewEvaluator()
+	ev := evaluator.Eval(node)
+	if isError(ev) {
+		return EvaluatedValues{}, fmt.Errorf("failed to evaluate file: %s", ev.(Error).Message)
+	}
+
+	return evaluator.ExportValues(), nil
+}
+
 func NewEvaluator() *Evaluator {
 	return &Evaluator{env: &Environment{store: make(map[string]Entity)}}
 }
